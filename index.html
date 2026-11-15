@@ -3209,12 +3209,24 @@ async function gModel(key){const c=lsGet('itnb_gmodel',null);if(c&&c.k===key.sli
 const b64=b=>new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(b)});
 SAMPLE=async function(input,opts={}){const key=GKEY();
  if(!key){gKeyDialog();const e=new Error('أضف مفتاح Gemini أولًا (مرة واحدة فقط)');e.code='no_key';throw e}
- const parts=[{text:String(input)}];for(const im of (opts.images||[]).slice(0,6))parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}});
+ // المحادثة: تحويل الرسائل إلى صيغة Gemini (user/model) بدل إرسالها كنص واحد
+ const msgs=Array.isArray(input)?input:[{role:'user',content:String(input)}];
+ const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content??'')}]}));
+ const first=contents.find(c=>c.role==='user')||contents[0];
+ for(const im of (opts.images||[]).slice(0,6))first.parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}});
  const model=await gModel(key);
- const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents:[{role:'user',parts}],generationConfig:{temperature:.7}})});
+ // إيقاف «التفكير» الطويل في نماذج Flash — هو السبب الأكبر للبطء
+ const think=/^gemini-2\.5-flash/.test(model)?{thinkingBudget:0}:/^gemini-[3-9]/.test(model)?{thinkingLevel:'minimal'}:null;
+ const send=tc=>fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents,generationConfig:Object.assign({temperature:.7},tc?{thinkingConfig:tc}:{})})});
+ let r=await send(think);
+ if(!r.ok&&r.status===400&&think)r=await send(null);
  if(!r.ok){let msg='';try{msg=(await r.json()).error.message||''}catch(_){}const e=new Error(r.status===429?'تجاوزت حد الاستخدام المجاني الآن — حاول بعد قليل':(r.status===400||r.status===403)&&/key|API_KEY|permission/i.test(msg)?'مفتاح Gemini غير صحيح — راجعه في الإعدادات':'تعذّر الاتصال بالمساعد ('+r.status+')');e.code=r.status===429?'rate_limited':'gemini';if(r.status===404)lsSet('itnb_gmodel',null);throw e}
- const j=await r.json();const text=((j.candidates||[])[0]?.content?.parts||[]).map(p=>p.text||'').join('');
- if(opts.onText)try{opts.onText(text)}catch(_){}
+ // البث: يظهر النص أولًا بأول بدل انتظار الإجابة كاملة
+ let text='',buf='';const rd=r.body.getReader(),dec=new TextDecoder();
+ const eat=line=>{line=line.trim();if(!line.startsWith('data:'))return;try{const j=JSON.parse(line.slice(5));const t=((j.candidates||[])[0]?.content?.parts||[]).filter(p=>!p.thought).map(p=>p.text||'').join('');if(t){text+=t;if(opts.onText)try{opts.onText({text})}catch(_){}}}catch(_){}};
+ for(;;){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf('\n'))>=0){eat(buf.slice(0,i));buf=buf.slice(i+1)}}
+ eat(buf);
+ if(!text){const e=new Error('لم يُرجع المساعد نصًا — أعيدي المحاولة');e.code='gemini';throw e}
  return {text}};
 SAMPLE.limits=async()=>({images:true});
 function gKeyDialog(){const m=modal({title:'✨ تفعيل المساعد الذكي (مرة واحدة)',body:`<p class="small" style="line-height:2">المساعد الذكي يعمل بمفتاح مجاني من Google Gemini:</p>
