@@ -2146,13 +2146,21 @@ VIEWS.preps=function(){
  $('#npx').onclick=()=>{const c=$('#pf').value||lessonsOf(key)[0]?.code;prepEditor(Store.save(newPrep(key,c)),VIEWS.preps)};
  $('#prAll').onclick=()=>{const L=Store.all('prep').filter(p=>p.key===key&&(!code||p.code===code)).sort((a,b)=>a.code.localeCompare(b.code,undefined,{numeric:true}));if(!L.length)return toast('لا يوجد تحضير');printDoc('دفتر التحضير — '+keyLabel(key),L.map(prepBody).join('<div style="page-break-after:always"></div>'))};
 };
+// الخانات التي يمكن أن تكون نشاطًا تفاعليًا ← نوع النشاط المطلوب من المساعد
+const PREP_ACT={prior:'prior',intro:'intro',procedures:'game',formative:'formative',closing:'closing',remedial:'remedial',enrich:'enrich',homework:'game'};
+function prepActs(p,E){p.acts=(p.acts||[]).filter(a=>Store.get(a.id));
+ $$('[data-al]',E).forEach(box=>{const L=p.acts.filter(a=>a.f===box.dataset.al);
+  box.innerHTML=L.map(a=>`<div class="row" style="gap:4px;margin-top:6px;align-items:center;background:#F6EFEB;border-radius:12px;padding:4px 8px"><span class="small" style="flex:1">🎮 ${esc(Store.get(a.id)?.title||a.title)}</span><button class="btn sm" data-ap="${a.id}" title="تشغيل">▶️</button><button class="btn sm pri" data-ak="${a.id}">🔗 الرابط</button><button class="btn sm ghost" data-ad="${a.id}" title="إزالة من التحضير">✕</button></div>`).join('')});
+ $$('[data-ap]',E).forEach(b=>b.onclick=()=>quizPlay(Store.get(b.dataset.ap)));
+ $$('[data-ak]',E).forEach(b=>b.onclick=()=>shareActivity(Store.get(b.dataset.ak)));
+ $$('[data-ad]',E).forEach(b=>b.onclick=()=>{p.acts=p.acts.filter(a=>a.id!==b.dataset.ad);Store.save(p);prepActs(p,E);toast('أُزيل من التحضير (ما زال في «أنشطتي التفاعلية»)')})}
 function prepEditor(p,onDone){
  const l=lessonOf(p.key,p.code);
  const m=modal({title:`${p.title} — ${p.code} ${l?.title||''}`,wide:true,onClose:()=>onDone&&onDone(),body:`
  <div class="row" style="margin-bottom:10px;align-items:flex-end"><div><label class="f">اسم التحضير</label><input class="in" id="pt" value="${esc(p.title)}"></div>${lessonSelect(p.key,p.code,{all:false,id:'pc'})}
  <button class="btn ai-btn" id="aiAll">✨ تعبئة التحضير بالمساعد</button><button class="btn" id="bk">📖 صفحة الكتاب</button><button class="btn" id="gd">📘 صفحة دليل المعلم</button></div>
  <label class="row small" style="gap:8px;margin-bottom:12px;align-items:center"><input type="checkbox" id="pDone" ${p.done||(p.sessions||[]).some(s=>s.done)?'checked':''}> <b>✔ نُفِّذ هذا التحضير</b> <span class="muted">(يُحسب في ملخص أعمالي)</span></label>
- <div class="grid g2">${PREP_F.map(([k,t])=>`<div><div class="row between"><label class="f">${t}</label><span class="row" style="gap:2px"><button class="btn sm ghost" data-cp="${k}" title="نسخ">📋</button>${k!=='reflect'?`<button class="btn sm ghost" data-ai="${k}" title="اقتراح بالمساعد">✨</button>`:''}</span></div><textarea class="in" data-f="${k}" style="min-height:${k==='procedures'?190:100}px">${esc(p.f[k]||'')}</textarea></div>`).join('')}</div>
+ <div class="grid g2">${PREP_F.map(([k,t])=>`<div><div class="row between"><label class="f">${t}</label><span class="row" style="gap:2px"><button class="btn sm ghost" data-cp="${k}" title="نسخ">📋</button>${PREP_ACT[k]?`<button class="btn sm ghost" data-dz="${k}" title="تصميم نشاط تفاعلي برابط">🎮</button>`:''}${k!=='reflect'?`<button class="btn sm ghost" data-ai="${k}" title="اقتراح بالمساعد">✨</button>`:''}</span></div><textarea class="in" data-f="${k}" style="min-height:${k==='procedures'?190:100}px">${esc(p.f[k]||'')}</textarea><div class="pacts" data-al="${k}"></div></div>`).join('')}</div>
  <div class="item" style="margin-top:12px"><div class="row between"><b>مرفقات التحضير</b><button class="btn sm" id="att">📎 إرفاق</button></div><div id="pfiles"></div></div>`,
  foot:`<button class="btn pri" id="done">تم</button><button class="btn" id="pr" title="طباعة" aria-label="طباعة">🖨️</button><span class="small muted" style="align-self:center">يُحفظ تلقائيًا</span>`});
  const E=m.el,save=()=>Store.save(p);
@@ -2168,6 +2176,19 @@ function prepEditor(p,onDone){
  $('#att',E).onclick=async()=>{const fs=await pickFiles();if(!fs.length)return;toast('جارٍ الرفع…');p.files.push(...await uploadFiles(fs));save();rf()};
  $('#bk',E).onclick=()=>openBook('book_'+p.key,lessonOf(p.key,p.code)?.bp||1);$('#gd',E).onclick=()=>openBook('guide_'+p.key,lessonOf(p.key,p.code)?.gp||1);
  $('#done',E).onclick=()=>m.close();$('#pr',E).onclick=()=>printPrep(p);
+ prepActs(p,E);
+ $$('[data-dz]',E).forEach(b=>b.onclick=()=>{const k=b.dataset.dz;const nm=(PREP_F.find(x=>x[0]===k)||[0,''])[1];
+  if(!SAMPLE)return toast('المساعد الذكي غير متاح في هذا العرض');
+  const q=modal({title:'🎮 نشاط تفاعلي — '+nm,body:`<p class="small" style="line-height:2">يصمّم المساعد نشاطًا تفاعليًا للشاشة التفاعلية من أهداف الدرس وصفحات الكتاب، ويضعه في هذه الخانة مع رابط تفتحينه على أي جهاز.</p><label class="f">فكرتك (اختياري)</label><textarea class="in" id="idea" placeholder="مثال: سحب صور المفاتيح إلى وظائفها، أو بطاقات ذاكرة لأجزاء الحاسوب"></textarea>`,foot:`<button class="btn ai-btn" id="go">🎮 صمّم النشاط</button>`});
+  $('#go',q.el).onclick=async()=>{const idea=$('#idea',q.el).value.trim();q.close(true);
+   const old=b.innerHTML;b.disabled=true;b.innerHTML='<span class="spin"></span>';toast('جارٍ تصميم النشاط… قد يستغرق دقيقة');
+   try{const type=PREP_ACT[k];const d=await aiDesign({key:p.key,code:p.code,request:idea,type,onText:({text})=>{b.title='يكتب… '+Math.round(text.length/1000)+'k'}});
+    const it={id:uid('item'),kind:'item',lib:'interactive',sub:['prior','intro','formative','closing'].includes(type)?type:'game',key:p.key,code:p.code,title:d.title,html:d.html,images:d.files,files:[],links:[],quiz:[],created:Date.now(),ai:true};
+    Store.save(it);p.acts=p.acts||[];p.acts.push({f:k,id:it.id,title:it.title});
+    const ta=$(`[data-f="${k}"]`,E);const line='🎮 نشاط تفاعلي: «'+it.title+'»';p.f[k]=((p.f[k]||'').trim()?(p.f[k].trim()+'\n'):'')+line;if(ta)ta.value=p.f[k];
+    save();prepActs(p,E);toast('✔ صُمِّم النشاط — اضغطي «🔗 الرابط» تحت الخانة')}
+   catch(e){toast(e.message||'تعذّر تصميم النشاط')}
+   b.disabled=false;b.innerHTML=old;b.title='تصميم نشاط تفاعلي برابط'}});
  if(typeof GKEY==='function'&&GKEY())setTimeout(()=>lessonImages(p.key,p.code,{gpages:3}).catch(()=>{}),300);
  const fillFrom=(obj)=>{Object.entries(obj||{}).forEach(([k,v])=>{if(v&&PREP_F.some(x=>x[0]===k)){p.f=p.f||{};p.f[k]=Array.isArray(v)?v.join('\n'):String(v);const t=$(`[data-f="${k}"]`,E);if(t)t.value=p.f[k]}});save()};
  $('#aiAll',E).onclick=async()=>{const b=$('#aiAll',E);b.disabled=true;b.innerHTML='<span class="spin"></span> جارٍ التحضير…';
@@ -2370,11 +2391,11 @@ function itemCard(i){
  return `<div class="item"><div class="row between"><div class="row" style="gap:4px"><span class="badge">${esc(SUBNAME[i.sub]||i.sub)}</span>${i.code?`<span class="badge acc">${esc(i.code)}</span>`:''}${cls?`<span class="badge warn">فصل ${esc(cls.name)}</span>`:''}${i.ai?'<span title="بمساعدة الذكاء الاصطناعي">✨</span>':''}</div>${i.quiz?.length?'<span class="badge ok">🎮 '+i.quiz.length+' أسئلة</span>':''}</div>
  <div class="ttl">${esc(i.title||'(بدون عنوان)')}</div>${i.lib==='initiatives'&&i.stage?.length?`<span class="badge ok">${esc(i.stage.join('، '))}</span>`:''}<div class="small muted">${esc((i.body||i.summary||'').slice(0,140))}</div>
  ${i.images?.length?`<div class="thumbs">${i.images.slice(0,3).map(f=>`<img src="${esc(fileUrl(f))}" style="height:60px">`).join('')}</div>`:''}
- <div class="acts"><button class="btn sm pri" data-v="${i.id}">عرض</button>${i.quiz?.length||i.html?`<button class="btn sm acc" data-play="${i.id}">▶️ تشغيل</button><button class="btn sm" data-hx="${i.id}" title="تنزيل ملف HTML للشاشة التفاعلية">⬇️</button><button class="btn sm" data-hc="${i.id}" title="نسخ كود HTML">📋</button>`:''}<button class="btn sm" data-e="${i.id}">تعديل</button><button class="btn sm" data-pr="${i.id}">🖨️</button><button class="btn sm bad" data-x="${i.id}">✕</button></div></div>`;
+ <div class="acts"><button class="btn sm pri" data-v="${i.id}">عرض</button>${i.quiz?.length||i.html?`<button class="btn sm acc" data-play="${i.id}">▶️ تشغيل</button><button class="btn sm" data-hx="${i.id}" title="تنزيل ملف HTML للشاشة التفاعلية">⬇️</button><button class="btn sm" data-hc="${i.id}" title="نسخ كود HTML">📋</button><button class="btn sm" data-lk="${i.id}" title="رابط للمشاركة">🔗</button>`:''}<button class="btn sm" data-e="${i.id}">تعديل</button><button class="btn sm" data-pr="${i.id}">🖨️</button><button class="btn sm bad" data-x="${i.id}">✕</button></div></div>`;
 }
 function bindItemCards(el,re){
  $$('[data-v]',el).forEach(b=>b.onclick=()=>itemView(Store.get(b.dataset.v),re));
- $$('[data-play]',el).forEach(b=>b.onclick=()=>quizPlay(Store.get(b.dataset.play)));$$('[data-hx]',el).forEach(b=>b.onclick=()=>exportQuizHtml(Store.get(b.dataset.hx)));$$('[data-hc]',el).forEach(b=>b.onclick=()=>copyActivityHtml(Store.get(b.dataset.hc)));$$('[data-sh]',el).forEach(b=>b.onclick=()=>shareToTlib(Store.get(b.dataset.sh)));
+ $$('[data-play]',el).forEach(b=>b.onclick=()=>quizPlay(Store.get(b.dataset.play)));$$('[data-hx]',el).forEach(b=>b.onclick=()=>exportQuizHtml(Store.get(b.dataset.hx)));$$('[data-hc]',el).forEach(b=>b.onclick=()=>copyActivityHtml(Store.get(b.dataset.hc)));$$('[data-lk]',el).forEach(b=>b.onclick=()=>shareActivity(Store.get(b.dataset.lk)));$$('[data-sh]',el).forEach(b=>b.onclick=()=>shareToTlib(Store.get(b.dataset.sh)));
  $$('[data-e]',el).forEach(b=>b.onclick=()=>itemEditor(clone(Store.get(b.dataset.e)),re));
  $$('[data-pr]',el).forEach(b=>b.onclick=()=>{const i=Store.get(b.dataset.pr);printDoc(i.title||'نشاط',activityHtml(i,true))});
  $$('[data-x]',el).forEach(b=>b.onclick=async()=>{if(!await ask('حذف هذا العنصر نهائيًا؟','حذف'))return;Store.del(b.dataset.x);re()});
@@ -2399,9 +2420,9 @@ function itemView(i,re){
   (vids.length?vids.map(f=>`<video src="${esc(fileUrl(f))}" controls style="width:100%;margin-top:10px;border-radius:10px"></video>`).join(''):'')+
   ((i.links||[]).filter(ytId).length?`<div class="grid g3" style="margin-top:10px">${i.links.filter(ytId).map(u=>`<a class="item" href="${esc(u)}" target="_blank" style="text-decoration:none;align-items:center"><div style="font-size:46px">▶️</div><b>تشغيل الفيديو على يوتيوب</b></a>`).join('')}</div>`:'')+
   `<div style="margin-top:10px">${filesHtml((i.files||[]).filter(f=>!f.type?.startsWith('video')))}</div><div id="bpv" class="thumbs" style="margin-top:10px"></div>`,
-  foot:`${i.quiz?.length||i.html?'<button class="btn acc" id="play">▶️ تجربة</button><button class="btn" id="hx">⬇️ تنزيل HTML</button><button class="btn" id="hc">📋 نسخ الكود</button>':''}${i.html?'<button class="btn ai-btn" id="aed">✏️ تعديل بالمساعد</button>':''}<button class="btn" id="ed">${i.html?'الاسم والدرس':'تعديل'}</button><button class="btn" id="pr" title="طباعة" aria-label="طباعة">🖨️</button>`});
+  foot:`${i.quiz?.length||i.html?'<button class="btn acc" id="play">▶️ تجربة</button><button class="btn" id="hx">⬇️ تنزيل HTML</button><button class="btn" id="hc">📋 نسخ الكود</button><button class="btn" id="lk">🔗 رابط</button>':''}${i.html?'<button class="btn ai-btn" id="aed">✏️ تعديل بالمساعد</button>':''}<button class="btn" id="ed">${i.html?'الاسم والدرس':'تعديل'}</button><button class="btn" id="pr" title="طباعة" aria-label="طباعة">🖨️</button>`});
  bindFiles(m.el,(i.files||[]).filter(f=>!f.type?.startsWith('video')),()=>{});
- $('#play',m.el)&&($('#play',m.el).onclick=()=>quizPlay(i));$('#hx',m.el)&&($('#hx',m.el).onclick=()=>exportQuizHtml(i));$('#hc',m.el)&&($('#hc',m.el).onclick=()=>copyActivityHtml(i));$('#aed',m.el)&&($('#aed',m.el).onclick=()=>{m.close(true);aiEditHtml(i,re)});i.html&&($('.dzf',m.el).srcdoc=i.html);
+ $('#play',m.el)&&($('#play',m.el).onclick=()=>quizPlay(i));$('#hx',m.el)&&($('#hx',m.el).onclick=()=>exportQuizHtml(i));$('#hc',m.el)&&($('#hc',m.el).onclick=()=>copyActivityHtml(i));$('#lk',m.el)&&($('#lk',m.el).onclick=()=>shareActivity(i));$('#aed',m.el)&&($('#aed',m.el).onclick=()=>{m.close(true);aiEditHtml(i,re)});i.html&&($('.dzf',m.el).srcdoc=i.html);
  $('#ed',m.el).onclick=()=>{m.close(true);itemEditor(clone(i),re)};
  $('#pr',m.el).onclick=()=>printDoc(i.title||'نشاط',activityHtml(i,true));
  if(i.bookPages?.length&&i.key!=='all')bookThumbs($('#bpv',m.el),'book_'+i.key,i.bookPages.slice(0,4));
@@ -2878,6 +2899,21 @@ function initiativeEditor(it,re){
 async function toDataUrl(f){try{const r=await fetch(fileUrl(f));const b=await r.blob();return await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=()=>res('');fr.readAsDataURL(b)})}catch(e){return ''}}
 function htmlPlay(i){const box=document.createElement('div');box.className='hzp';box.innerHTML='<iframe sandbox="allow-scripts allow-same-origin" allow="fullscreen"></iframe><button class="hzx">✕</button>';document.body.appendChild(box);$('iframe',box).srcdoc=i.html;
  try{box.requestFullscreen&&box.requestFullscreen().catch(()=>{})}catch(e){}$('.hzx',box).onclick=()=>{try{document.fullscreenElement&&document.exitFullscreen()}catch(e){}box.remove()}}
+/* ===== رابط مشاركة للنشاط التفاعلي: الصفحة كلها مضغوطة داخل الرابط، فيعمل على أي جهاز بلا خادم ===== */
+function shrinkImg(src,max=420,q=.62){return new Promise(res=>{const im=new Image();im.onload=()=>{const k=Math.min(1,max/Math.max(im.width,im.height));const c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.width*k));c.height=Math.max(1,Math.round(im.height*k));const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);const d=c.toDataURL('image/jpeg',q);res(d.length<src.length?d:src)};im.onerror=()=>res(src);im.src=src})}
+function b64u(u8){let s='';for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+async function activityLink(it){let h=await buildActivityHtml(it);if(!h)return '';
+ const big=[...new Set(h.match(/data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]{12000,}/g)||[])];
+ for(const d of big){const sm=await shrinkImg(d);if(sm!==d)h=h.split(d).join(sm)}
+ const raw=new TextEncoder().encode(h);let tag='z',bytes=raw;
+ try{bytes=new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer())}catch(e){tag='u';bytes=raw}
+ return new URL('play.html',location.href).href.split('#')[0]+'#'+tag+'='+b64u(bytes)}
+async function shareActivity(it){if(!it)return toast('النشاط غير موجود في المكتبة');toast('جارٍ تجهيز الرابط…');const url=await activityLink(it);if(!url)return;
+ const m=modal({title:'🔗 رابط النشاط: '+(it.title||''),body:`<p class="small" style="line-height:2">يفتح النشاط على أي جهاز (الشاشة التفاعلية، جوال، حاسوب) بدون تسجيل دخول. النشاط محفوظ داخل الرابط نفسه، لذلك يبدو طويلًا.</p><textarea class="in" dir="ltr" readonly style="min-height:90px;font-size:11px">${esc(url)}</textarea>`,
+  foot:`<button class="btn pri" id="lcp">📋 نسخ الرابط</button>${navigator.share?'<button class="btn" id="lsh">📤 مشاركة</button>':''}<button class="btn" id="lop">↗️ فتح</button>`});
+ $('#lcp',m.el).onclick=async()=>{try{await navigator.clipboard.writeText(url);toast('تم نسخ الرابط 🔗')}catch(e){const t=$('textarea',m.el);t.select();try{document.execCommand('copy');toast('تم نسخ الرابط 🔗')}catch(_){toast('حدّدي الرابط وانسخيه')}}};
+ $('#lsh',m.el)&&($('#lsh',m.el).onclick=()=>navigator.share({title:it.title||'نشاط تفاعلي',url}).catch(()=>{}));
+ $('#lop',m.el).onclick=()=>window.open(url,'_blank')}
 async function exportQuizHtml(i){const h=await buildActivityHtml(i);if(h)await saveFile((i.title||'نشاط').replace(/[\\/:*?"<>|]/g,'-')+'.html',h)}
 async function copyActivityHtml(i){const h=await buildActivityHtml(i);if(!h)return;try{await navigator.clipboard.writeText(h);toast('تم نسخ كود الصفحة 📋 — الصقيه في ملف .html')}catch(e){modal({title:'انسخي الكود',body:`<textarea class="in" style="min-height:300px" dir="ltr">${esc(h)}</textarea>`})}}
 async function buildActivityHtml(i){
@@ -3385,8 +3421,8 @@ function aiDialog({sub,key,code,classId,request='',onSaved}){
   if($('#adz',E)?.checked){try{const d=await aiDesign({key,code:c,request:$('#ar',E).value.trim(),type});
    const it={id:uid('item'),kind:'item',lib:'interactive',sub:['prior','intro','formative','closing'].includes(type)?type:'game',key,code:c,title:d.title,html:d.html,images:d.files,files:[],links:[],quiz:[],created:Date.now(),ai:true};
    Store.save(it);onSaved&&onSaved();
-   $('#out',E).innerHTML=`<div class="note info small">✔ حُفظ تلقائيًا في «أنشطتي التفاعلية»، وتجدينه هناك للتجربة والتعديل.</div><div class="dzw"><iframe class="dzf" sandbox="allow-scripts"></iframe></div><div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn acc" id="try">⛶ تجربة</button><button class="btn" id="dl">⬇️ تنزيل HTML</button><button class="btn" id="cp">📋 نسخ الكود</button><button class="btn ai-btn" id="aed">✏️ تعديل بالمساعد</button></div>`;
-   $('.dzf',E).srcdoc=it.html;$('#try',E).onclick=()=>htmlPlay(it);$('#dl',E).onclick=()=>exportQuizHtml(it);$('#cp',E).onclick=()=>copyActivityHtml(it);$('#aed',E).onclick=()=>{m.close(true);aiEditHtml(it,onSaved)};
+   $('#out',E).innerHTML=`<div class="note info small">✔ حُفظ تلقائيًا في «أنشطتي التفاعلية»، وتجدينه هناك للتجربة والتعديل.</div><div class="dzw"><iframe class="dzf" sandbox="allow-scripts"></iframe></div><div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn acc" id="try">⛶ تجربة</button><button class="btn" id="dl">⬇️ تنزيل HTML</button><button class="btn" id="cp">📋 نسخ الكود</button><button class="btn" id="lk">🔗 رابط</button><button class="btn ai-btn" id="aed">✏️ تعديل بالمساعد</button></div>`;
+   $('.dzf',E).srcdoc=it.html;$('#try',E).onclick=()=>htmlPlay(it);$('#dl',E).onclick=()=>exportQuizHtml(it);$('#cp',E).onclick=()=>copyActivityHtml(it);$('#lk',E).onclick=()=>shareActivity(it);$('#aed',E).onclick=()=>{m.close(true);aiEditHtml(it,onSaved)};
   }catch(e){$('#out',E).innerHTML=`<div class="note">${esc(e.message||'تعذّر الاتصال بالمساعد')}</div>`}
   b.disabled=false;b.textContent='🔁 تصميم آخر';return}
   try{result=await aiActivity({type,key,code:c,request:$('#ar',E).value.trim(),cls,useImages:$('#aimg',E).checked});

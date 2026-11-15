@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>نشاط تفاعلي — دفتر معلم تقنية المعلومات</title>
+<link rel="icon" href="icon-192.png">
+<style>
+html,body{margin:0;height:100%;background:#F6EFEB;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;color:#4A4240}
+#f{position:fixed;inset:0;width:100%;height:100%;border:0;background:#fff;display:none}
+#msg{position:fixed;inset:0;display:grid;place-items:center;text-align:center;padding:24px;font-size:18px;line-height:2}
+.spin{display:inline-block;width:26px;height:26px;border:3px solid #E7C9C3;border-top-color:#B98B6E;border-radius:50%;animation:s 1s linear infinite;vertical-align:middle}
+@keyframes s{to{transform:rotate(360deg)}}
+#fs{position:fixed;bottom:12px;left:12px;z-index:5;border:0;border-radius:14px;padding:8px 12px;background:rgba(74,66,64,.55);color:#fff;font-size:18px;cursor:pointer;display:none}
+</style>
+</head>
+<body>
+<div id="msg"><div><span class="spin"></span><br>جارٍ فتح النشاط…</div></div>
+<iframe id="f" sandbox="allow-scripts allow-modals allow-popups" allow="fullscreen; autoplay" allowfullscreen></iframe>
+<button id="fs" title="ملء الشاشة">⛶</button>
+<script>
+(async()=>{
+ const msg=document.getElementById('msg'),f=document.getElementById('f'),fs=document.getElementById('fs');
+ const fail=t=>{msg.innerHTML='<div>⚠️ '+t+'</div>'};
+ try{
+  const h=location.hash.slice(1),i=h.indexOf('=');
+  if(i<0)return fail('الرابط ناقص — انسخي الرابط كاملًا من الدفتر وأعيدي المحاولة.');
+  const tag=h.slice(0,i);let b=h.slice(i+1).replace(/-/g,'+').replace(/_/g,'/');while(b.length%4)b+='=';
+  const bin=atob(b),u8=new Uint8Array(bin.length);for(let k=0;k<bin.length;k++)u8[k]=bin.charCodeAt(k);
+  let bytes=u8;
+  if(tag==='z'){
+   if(typeof DecompressionStream==='undefined')return fail('هذا المتصفح قديم ولا يفتح النشاط. جرّبي Chrome أو حدّثي المتصفح.');
+   bytes=new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
+  const html=new TextDecoder().decode(bytes);
+  const t=(html.match(/<title>([\s\S]*?)<\/title>/i)||[])[1];if(t)document.title=t.trim();
+  f.srcdoc=html;f.style.display='block';msg.style.display='none';
+  if(document.documentElement.requestFullscreen){fs.style.display='block';fs.onclick=()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})};}
+ }catch(e){fail('تعذّر فتح النشاط — قد يكون الرابط ناقصًا. انسخيه كاملًا من الدفتر.')}
+})();
+</script>
+</body>
+</html>
