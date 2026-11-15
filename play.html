@@ -19,6 +19,10 @@ html,body{margin:0;height:100%;background:#F6EFEB;font-family:system-ui,"Segoe U
 <iframe id="f" sandbox="allow-scripts allow-modals allow-popups" allow="fullscreen; autoplay" allowfullscreen></iframe>
 <button id="fs" title="ملء الشاشة">⛶</button>
 <script>
+const ACT_SHIM=`<script data-dafter-shim>(function(){try{localStorage.getItem('_')}catch(e){var m={},S={getItem:function(k){return k in m?m[k]:null},setItem:function(k,v){m[k]=String(v)},removeItem:function(k){delete m[k]},clear:function(){m={}},key:function(i){return Object.keys(m)[i]||null},get length(){return Object.keys(m).length}};try{Object.defineProperty(window,'localStorage',{value:S,configurable:true});Object.defineProperty(window,'sessionStorage',{value:S,configurable:true})}catch(_){}}
+var shown=0;function bar(t){try{if(parent!==window)parent.postMessage({dafterErr:String(t)},'*')}catch(_){}if(shown++>2||!document.body)return;var d=document.createElement('div');d.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:2147483647;background:#7a3d48;color:#fff;font:14px system-ui;padding:8px 12px;direction:rtl;text-align:right';d.textContent='⚠️ في النشاط خطأ برمجي: '+t+' — من الدفتر اضغطي «تعديل بالمساعد» واطلبي: أصلح الخطأ';document.body.appendChild(d)}
+window.addEventListener('error',function(e){bar(e.message||'خطأ')});window.addEventListener('unhandledrejection',function(e){bar(String(e.reason&&e.reason.message||e.reason))})})();<\/script>`;
+function actFix(h){h=String(h||'');if(!h||h.includes('data-dafter-shim'))return h;const m=h.match(/<head[^>]*>/i);return m?h.replace(m[0],m[0]+ACT_SHIM):ACT_SHIM+h}
 (async()=>{
  const msg=document.getElementById('msg'),f=document.getElementById('f'),fs=document.getElementById('fs');
  const fail=t=>{msg.innerHTML='<div>⚠️ '+t+'</div>'};
@@ -32,7 +36,7 @@ html,body{margin:0;height:100%;background:#F6EFEB;font-family:system-ui,"Segoe U
    if(typeof DecompressionStream==='undefined')return fail('هذا المتصفح قديم ولا يفتح النشاط. جرّبي Chrome أو حدّثي المتصفح.');
    bytes=new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
   }
-  const html=new TextDecoder().decode(bytes);
+  const html=actFix(new TextDecoder().decode(bytes));
   const t=(html.match(/<title>([\s\S]*?)<\/title>/i)||[])[1];if(t)document.title=t.trim();
   f.srcdoc=html;f.style.display='block';msg.style.display='none';
   if(document.documentElement.requestFullscreen){fs.style.display='block';fs.onclick=()=>{document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen().catch(()=>{})};}
