@@ -3201,34 +3201,52 @@ async function saRestore(){const [f]=await pickFiles('.json,application/json',fa
 
 /* --- المساعد الذكي عبر Gemini --- */
 const GKEY=()=>lsGet('itnb_gkey','');
-async function gModel(key){const c=lsGet('itnb_gmodel',null);if(c&&c.k===key.slice(-6)&&Date.now()-c.t<7*864e5)return c.m;
- let m='gemini-2.5-flash';
+async function gModel(key){const c=lsGet('itnb_gmodel2',null);if(c&&c.k===key.slice(-6)&&Date.now()-c.t<3*864e5)return c;
+ let m='gemini-2.5-flash',lite='gemini-2.5-flash-lite';
  try{const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:{'x-goog-api-key':key}});if(r.ok){const j=await r.json();
-  const L=(j.models||[]).filter(x=>(x.supportedGenerationMethods||[]).includes('generateContent')).map(x=>x.name.replace('models/','')).filter(n=>/^gemini-\d+(\.\d+)?-flash$/.test(n));
-  if(L.length){L.sort((a,b)=>parseFloat(b.split('-')[1])-parseFloat(a.split('-')[1]));m=L[0]}}}catch(e){}
- lsSet('itnb_gmodel',{k:key.slice(-6),m,t:Date.now()});return m}
+  const all=(j.models||[]).filter(x=>(x.supportedGenerationMethods||[]).includes('generateContent')).map(x=>x.name.replace('models/',''));
+  const pick=re=>all.filter(n=>re.test(n)).sort((a,b)=>parseFloat(b.split('-')[1])-parseFloat(a.split('-')[1]))[0];
+  m=pick(/^gemini-\d+(\.\d+)?-flash$/)||m;lite=pick(/^gemini-\d+(\.\d+)?-flash-lite$/)||lite}}catch(e){}
+ const o={k:key.slice(-6),m,lite,t:Date.now()};lsSet('itnb_gmodel2',o);return o}
+// طلب واحد في كل مرة — الضغط على عدة أزرار معًا يتجاوز حد الدقيقة المجاني
+let _gq=Promise.resolve();function gQueue(fn){const r=_gq.then(fn,fn);_gq=r.catch(()=>{});return r}
 const b64=b=>new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(String(fr.result).split(',')[1]);fr.readAsDataURL(b)});
-SAMPLE=async function(input,opts={}){const key=GKEY();
+SAMPLE=(input,opts={})=>gQueue(()=>gRun(input,opts));
+async function gRun(input,opts){const key=GKEY();
  if(!key){gKeyDialog();const e=new Error('أضف مفتاح Gemini أولًا (مرة واحدة فقط)');e.code='no_key';throw e}
  // المحادثة: تحويل الرسائل إلى صيغة Gemini (user/model) بدل إرسالها كنص واحد
  const msgs=Array.isArray(input)?input:[{role:'user',content:String(input)}];
  const contents=msgs.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:String(m.content??'')}]}));
  const first=contents.find(c=>c.role==='user')||contents[0];
  for(const im of (opts.images||[]).slice(0,6))first.parts.push({inline_data:{mime_type:im.type||'image/jpeg',data:await b64(im)}});
- const model=await gModel(key);
- // إيقاف «التفكير» الطويل في نماذج Flash — هو السبب الأكبر للبطء
- const think=/^gemini-2\.5-flash/.test(model)?{thinkingBudget:0}:/^gemini-[3-9]/.test(model)?{thinkingLevel:'minimal'}:null;
- const send=tc=>fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents,generationConfig:Object.assign({temperature:.7},tc?{thinkingConfig:tc}:{})})});
- let r=await send(think);
- if(!r.ok&&r.status===400&&think)r=await send(null);
- if(!r.ok){let msg='';try{msg=(await r.json()).error.message||''}catch(_){}const e=new Error(r.status===429?'تجاوزت حد الاستخدام المجاني الآن — حاول بعد قليل':(r.status===400||r.status===403)&&/key|API_KEY|permission/i.test(msg)?'مفتاح Gemini غير صحيح — راجعه في الإعدادات':'تعذّر الاتصال بالمساعد ('+r.status+')');e.code=r.status===429?'rate_limited':'gemini';if(r.status===404)lsSet('itnb_gmodel',null);throw e}
+ const M=await gModel(key);const models=[M.m];if(M.lite&&M.lite!==M.m)models.push(M.lite);
+ const send=(model,tc)=>fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({contents,generationConfig:Object.assign({temperature:.7},tc?{thinkingConfig:tc}:{})})});
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+ let r=null,lastMsg='',daily=false;
+ for(const model of models){
+  // إيقاف «التفكير» الطويل في نماذج Flash — هو السبب الأكبر للبطء
+  const think=/^gemini-2\.5-flash/.test(model)?{thinkingBudget:0}:/^gemini-[3-9]/.test(model)?{thinkingLevel:'minimal'}:null;
+  for(let tries=0;tries<3;tries++){
+   r=await send(model,think);
+   if(!r.ok&&r.status===400&&think)r=await send(model,null);
+   if(r.status!==429)break;
+   let body={};try{body=(await r.json()).error||{}}catch(_){}lastMsg=body.message||'';
+   const perDay=/per.?day|PerDay|daily/i.test(lastMsg+JSON.stringify(body.details||''));if(perDay){daily=true;break}
+   // حد الدقيقة: ننتظر المدة التي يطلبها Google ثم نعيد تلقائيًا
+   const rd=(body.details||[]).map(d=>d.retryDelay).find(Boolean);let w=rd?Math.ceil(parseFloat(rd)):15;w=Math.min(Math.max(w,3),40);
+   if(tries===2)break;try{toast('المساعد مزدحم قليلًا… سأعيد المحاولة تلقائيًا بعد '+w+' ثانية')}catch(_){}
+   await sleep(w*1000+300)}
+  if(r.ok)break;if(r.status!==429)break}
+ if(!r.ok){let msg=lastMsg;if(r.status!==429){try{msg=(await r.json()).error.message||''}catch(_){}}
+  const e=new Error(r.status===429?(daily?'انتهت الطلبات المجانية لهذا اليوم في مفتاح Gemini — تتجدد يوميًا قرابة الظهر بتوقيت الخليج':'المساعد مزدحم الآن — حاول بعد دقيقة'):(r.status===400||r.status===403)&&/key|API_KEY|permission/i.test(msg)?'مفتاح Gemini غير صحيح — راجعه في الإعدادات':'تعذّر الاتصال بالمساعد ('+r.status+')');
+  e.code=r.status===429?'rate_limited':'gemini';if(r.status===404)lsSet('itnb_gmodel2',null);throw e}
  // البث: يظهر النص أولًا بأول بدل انتظار الإجابة كاملة
- let text='',buf='';const rd=r.body.getReader(),dec=new TextDecoder();
+ let text='',buf='';const rdr=r.body.getReader(),dec=new TextDecoder();
  const eat=line=>{line=line.trim();if(!line.startsWith('data:'))return;try{const j=JSON.parse(line.slice(5));const t=((j.candidates||[])[0]?.content?.parts||[]).filter(p=>!p.thought).map(p=>p.text||'').join('');if(t){text+=t;if(opts.onText)try{opts.onText({text})}catch(_){}}}catch(_){}};
- for(;;){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf('\n'))>=0){eat(buf.slice(0,i));buf=buf.slice(i+1)}}
+ for(;;){const {done,value}=await rdr.read();if(done)break;buf+=dec.decode(value,{stream:true});let i;while((i=buf.indexOf('\n'))>=0){eat(buf.slice(0,i));buf=buf.slice(i+1)}}
  eat(buf);
  if(!text){const e=new Error('لم يُرجع المساعد نصًا — أعيدي المحاولة');e.code='gemini';throw e}
- return {text}};
+ return {text}}
 SAMPLE.limits=async()=>({images:true});
 function gKeyDialog(){const m=modal({title:'✨ تفعيل المساعد الذكي (مرة واحدة)',body:`<p class="small" style="line-height:2">المساعد الذكي يعمل بمفتاح مجاني من Google Gemini:</p>
  <ol class="small" style="line-height:2.1;padding-inline-start:18px">
@@ -3239,8 +3257,8 @@ function gKeyDialog(){const m=modal({title:'✨ تفعيل المساعد الذ
  <input class="in" id="gk" dir="ltr" placeholder="AIza..." value="${esc(GKEY())}" style="margin-top:6px">
  <p class="small muted" style="margin-top:6px">المفتاح يُحفظ في جهازك فقط ولا يراه أحد غيرك.</p>`,
  foot:`<button class="btn pri" id="gks">حفظ</button><button class="btn" id="gkt">تجربة</button>`});
- $('#gks',m.el).onclick=()=>{const v=$('#gk',m.el).value.trim();lsSet('itnb_gkey',v);lsSet('itnb_gmodel',null);m.close(true);toast(v?'✔ تم حفظ المفتاح — المساعد جاهز':'تم حذف المفتاح');UI.view==='settings'&&VIEWS.settings()};
- $('#gkt',m.el).onclick=async e=>{const v=$('#gk',m.el).value.trim();if(!v)return toast('الصق المفتاح أولًا');lsSet('itnb_gkey',v);lsSet('itnb_gmodel',null);const b=e.target;b.innerHTML='<span class="spin"></span>';
+ $('#gks',m.el).onclick=()=>{const v=$('#gk',m.el).value.trim();lsSet('itnb_gkey',v);lsSet('itnb_gmodel2',null);m.close(true);toast(v?'✔ تم حفظ المفتاح — المساعد جاهز':'تم حذف المفتاح');UI.view==='settings'&&VIEWS.settings()};
+ $('#gkt',m.el).onclick=async e=>{const v=$('#gk',m.el).value.trim();if(!v)return toast('الصق المفتاح أولًا');lsSet('itnb_gkey',v);lsSet('itnb_gmodel2',null);const b=e.target;b.innerHTML='<span class="spin"></span>';
   try{const r=await SAMPLE('أجب بكلمة واحدة: مرحبا');toast('✔ المفتاح يعمل: '+String(r.text).trim().slice(0,30))}catch(err){toast(err.message)}b.textContent='تجربة'}}
 
 /* --- تثبيت التطبيق --- */
@@ -3300,7 +3318,7 @@ async function aiCall(input,{images=[],onText}={}){
  if(!SAMPLE)throw new Error('المساعد الذكي غير متاح في هذا العرض');
  const opts={modelTier:'default'};if(images.length&&SAMPLE_IMG)opts.images=images;if(onText)opts.onText=onText;
  try{const r=await SAMPLE(input,opts);return r.text}
- catch(e){if(e&&e.code==='rate_limited')throw new Error('المساعد مشغول الآن، حاولي بعد قليل');if(e&&e.code==='not_granted')throw new Error('لم يُسمح بالمساعد الذكي');if(opts.images){delete opts.images;const r=await SAMPLE(input,opts);return r.text}throw e}
+ catch(e){if(e&&e.code==='rate_limited')throw new Error(e.message||'المساعد مشغول الآن، حاولي بعد قليل');if(e&&e.code==='not_granted')throw new Error('لم يُسمح بالمساعد الذكي');if(opts.images){delete opts.images;const r=await SAMPLE(input,opts);return r.text}throw e}
 }
 const ACT_SCHEMA=`{"title":"عنوان قصير جذاب","summary":"وصف النشاط في سطرين","target":"الفئة المستهدفة (للعلاجي والإثرائي)","duration":"المدة","objectives":["..."],"materials":["..."],"steps":["خطوة واضحة","..."],"assessment":"كيف يتحقق المعلم من التعلم","rubric":["معيار (للمشاريع والأنشطة العملية)"],"tips":"ملاحظات للمعلم","bookPages":[رقم صفحة الكتاب المرتبطة],"quiz":[{"prompt":"سؤال قصير جدًا","emoji":"رمز يوضح السؤال","crop":{"img":1,"box":[10,20,30,15]},"choices":[{"emoji":"🖱️","text":"كلمة","crop":{"img":1,"box":[55,40,20,12]}},{"emoji":"⌨️","text":"كلمة"},{"emoji":"🖥️","text":"كلمة"}],"answer":0}]}  (الحقل crop اختياري للسؤال أو لأي خيار: صورة مقصوصة من صفحات الكتاب)`;
 const TYPE_HINT={test:'اختبار قصير للدرس أو الوحدة جاهز للطباعة، أسئلة متنوعة (اختيار من متعدد، صح وخطأ، مطابقة، إجابة قصيرة) متدرجة الصعوبة مع توزيع الدرجات ومفتاح الإجابة في tips، وأسئلة مصوّرة في quiz.',prior:'نشاط للكشف عن التعلم القبلي (ما يعرفه الطلاب مسبقًا) قبل الدرس، 5 دقائق، مع 4–5 أسئلة مصوّرة.',intro:'نشاط تمهيد/تهيئة مشوّق يثير الدافعية ويربط بحياة الطالب، 5 دقائق، مع 3–4 أسئلة مصوّرة أو لغز.',formative:'تقويم بنائي أثناء الدرس، 5–8 دقائق، مع 4–6 أسئلة مصوّرة.',closing:'تقويم ختامي يقيس تحقق كل أهداف الدرس، 6–8 أسئلة مصوّرة متدرجة.',game:'لعبة تفاعلية جماعية بالصور على الشاشة التفاعلية، 6–8 أسئلة مصوّرة.',remedial:'نشاط/خطة علاجية لطلاب لم يتقنوا الأهداف: تبسيط، خطوات صغيرة، تعلم بالأقران، ممارسة موجهة، مع 3–4 أسئلة مصوّرة للتحقق.',enrich:'نشاط/خطة إثرائية للطلاب المتميزين: تحدٍّ إبداعي أعمق من الكتاب، مع 3 أسئلة تحدٍّ مصوّرة.',practical:'نشاط عملي على الحاسوب خطوة بخطوة كما في الكتاب، مع بطاقة تقييم أداء (rubric).',project:'مشروع للوحدة/الدرس: الفكرة، المراحل، المنتج النهائي، ومعايير التقييم (rubric). quiz يمكن أن يكون فارغًا.',initiative:'فكرة مبادرة تربوية في مادة تقنية المعلومات للمدرسة: الفكرة، الأهداف، الفئة المستهدفة، مراحل التنفيذ، مؤشرات النجاح. quiz فارغ.',question:'بنك أسئلة قصيرة (شفوية/كتابية) للدرس: 8–10 أسئلة قصيرة واضحة متدرجة تقيس أهداف الدرس، ضعها في steps (سؤال في كل عنصر مع إجابته بين قوسين)، وأضف 4–5 منها أسئلة مصوّرة في quiz.',custom:'نشاط حسب طلب المعلم.'};
