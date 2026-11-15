@@ -2168,12 +2168,13 @@ function prepEditor(p,onDone){
  $('#att',E).onclick=async()=>{const fs=await pickFiles();if(!fs.length)return;toast('جارٍ الرفع…');p.files.push(...await uploadFiles(fs));save();rf()};
  $('#bk',E).onclick=()=>openBook('book_'+p.key,lessonOf(p.key,p.code)?.bp||1);$('#gd',E).onclick=()=>openBook('guide_'+p.key,lessonOf(p.key,p.code)?.gp||1);
  $('#done',E).onclick=()=>m.close();$('#pr',E).onclick=()=>printPrep(p);
+ if(typeof GKEY==='function'&&GKEY())setTimeout(()=>lessonImages(p.key,p.code,{gpages:3}).catch(()=>{}),300);
  const fillFrom=(obj)=>{Object.entries(obj||{}).forEach(([k,v])=>{if(v&&PREP_F.some(x=>x[0]===k)){p.f=p.f||{};p.f[k]=Array.isArray(v)?v.join('\n'):String(v);const t=$(`[data-f="${k}"]`,E);if(t)t.value=p.f[k]}});save()};
  $('#aiAll',E).onclick=async()=>{const b=$('#aiAll',E);b.disabled=true;b.innerHTML='<span class="spin"></span> جارٍ التحضير…';
   try{const r=await aiPrep(p);fillFrom(r);toast('تمت التعبئة — راجعيها وعدّليها')}catch(e){toast(e.message||'تعذّر الاتصال بالمساعد')}b.disabled=false;b.textContent='✨ تعبئة التحضير بالمساعد'};
  $$('[data-cp]',E).forEach(b=>b.onclick=async()=>{const t=$(`[data-f="${b.dataset.cp}"]`,E).value;if(!t.trim())return toast('الخانة فارغة');try{await navigator.clipboard.writeText(t);toast('تم النسخ 📋')}catch(e){const ta=$(`[data-f="${b.dataset.cp}"]`,E);ta.select();try{document.execCommand('copy');toast('تم النسخ 📋')}catch(e2){toast('حدّدي النص وانسخيه')}}});
  $$('[data-ai]',E).forEach(b=>b.onclick=()=>{const k=b.dataset.ai;const nm=(PREP_F.find(x=>x[0]===k)||[0,''])[1];
-  const run=async idea=>{b.innerHTML='<span class="spin"></span>';try{const r=await aiPrep(p,k,idea);fillFrom({[k]:r[k]});toast('✔ تمت الكتابة في «'+nm+'»')}catch(e){toast(e.message||'تعذّر الاتصال')}b.textContent='✨'};
+  const run=async idea=>{b.innerHTML='<span class="spin"></span>';try{const ta=$(`[data-f="${k}"]`,E);const r=await aiPrep(p,k,idea,ta?({text})=>{ta.value=text.replace(/```[a-z]*|```|\*\*/g,'');ta.scrollTop=1e9}:null);fillFrom({[k]:r[k]});toast('✔ تمت الكتابة في «'+nm+'»')}catch(e){toast(e.message||'تعذّر الاتصال')}b.textContent='✨'};
   const q=modal({title:'✨ '+nm,body:`<label class="f">اكتبي فكرتك (اختياري)</label><textarea class="in" id="idea" placeholder="مثال: أريد التمهيد بقصة قصيرة عن حاسوب يتكلم، أو نشاط جماعي بالبطاقات…"></textarea>`,foot:`<button class="btn ai-btn" id="byIdea">✍️ حسب فكرتي</button><button class="btn" id="auto">✨ تلقائي</button>`});
   $('#auto',q.el).onclick=()=>{q.close(true);run('')};
   $('#byIdea',q.el).onclick=()=>{const t=$('#idea',q.el).value.trim();if(!t)return toast('اكتبي فكرتك أو اختاري «تلقائي»');q.close(true);run(t)};});
@@ -3272,12 +3273,17 @@ function lessonContext(key,code){
  else t+=`\nدروس الفصل: ${lessonsOf(key).map(x=>x.code+' '+x.title).join('، ')}.`;
  return t;
 }
+const _pgBlob={};
+function pageBlob(bk,p){const k=bk+'|'+p;if(!_pgBlob[k])_pgBlob[k]=renderPage(bk,p,1.0).then(c=>new Promise(r=>c.toBlob(r,'image/jpeg',.7))).catch(()=>{delete _pgBlob[k];return null});return _pgBlob[k]}
 async function lessonImages(key,code,{book=true,guide=true,gpages=1}={}){
  if(!SAMPLE_IMG||!code)return [];
  const l=lessonOf(key,code);if(!l)return [];
- const out=[];out.meta=[];const add=async(bk,p)=>{try{const c=await renderPage(bk,p,1.1);const b=await new Promise(r=>c.toBlob(r,'image/jpeg',.75));if(b){out.push(b);out.meta.push([bk,p])}}catch(e){}};
- if(book){await add('book_'+key,l.bp);await add('book_'+key,l.bp+1)}
- if(guide)for(let k=0;k<gpages;k++)await add('guide_'+key,l.gp+k);
+ const out=[];out.meta=[];const list=[];
+ if(book)list.push(['book_'+key,l.bp],['book_'+key,l.bp+1]);
+ if(guide)for(let k=0;k<gpages;k++)list.push(['guide_'+key,l.gp+k]);
+ // الصفحات تُجهَّز معًا وتُحفظ في الذاكرة، فلا يُعاد رسمها مع كل طلب
+ const bl=await Promise.all(list.map(([bk,p])=>pageBlob(bk,p)));
+ bl.forEach((b,i)=>{if(b){out.push(b);out.meta.push(list[i])}});
  return out;
 }
 function fixJSONStr(j){let o='',q=false,e=false;for(const ch of j){if(q){if(e){o+=ch;e=false;continue}if(ch==='\\'){o+=ch;e=true;continue}if(ch==='"'){q=false;o+=ch;continue}if(ch==='\n'){o+='\\n';continue}if(ch==='\r')continue;if(ch==='\t'){o+='\\t';continue}o+=ch}else{if(ch==='"')q=true;o+=ch}}return o}
@@ -3333,13 +3339,13 @@ ${imgs.length?`- الصور: استخدم صورًا حقيقية من صفحا�
  html=html.replace(/\{\{img:([^}]+)\}\}/g,(m,id)=>{const f=F[id.trim()];if(f){files.push(f);return fileUrl(f)}return ''});
  return {title:title.trim(),html,files};
 }
-async function aiPrep(prep,field,idea=''){
+async function aiPrep(prep,field,idea='',onText){
  const fields=PREP_F.filter(([k])=>k!=='reflect'&&(!field||k===field));
  const imgs=await lessonImages(prep.key,prep.code,{gpages:3});
  const p=`${AI_BASE}\n\n${lessonContext(prep.key,prep.code)}\n\n${idea?'فكرة المعلمة لهذا الجزء (التزم بها وطوّرها): '+idea+'\n\n':''}اكتب ${field?'هذا الجزء من':''} تحضير الدرس (خطة درس يومية) وفق ما ورد في دليل المعلم واستراتيجياته${imgs.length?' (أرفقتُ صفحتي الدرس من كتاب التلميذ ثم صفحات الدرس من دليل المعلم: اعتمد أولًا على دليل المعلم في الأهداف والمصطلحات والوسائل وخطوات سير الدرس والأنشطة والتقويم وأسئلته، ثم على الكتاب)':''}.
 ${Object.entries(prep.f).filter(([k,v])=>v&&k!==field).length?`ما كتبه المعلم حتى الآن (حافظ على روحه وطوّره):\n${Object.entries(prep.f).filter(([k,v])=>v&&k!==field).map(([k,v])=>`- ${PREP_F.find(x=>x[0]===k)?.[1]}: ${v.slice(0,500)}`).join('\n')}\n`:''}
 أعد JSON فقط بالمفاتيح التالية، وكل قيمة نص عربي (استخدم أسطرًا مرقمة داخل النص عند الحاجة، وفي «إجراءات التدريس» حدد الزمن ودور المعلم ودور المتعلم):\n{${fields.map(([k,t])=>`"${k}":"${t}"`).join(',')}}`;
- if(field){const nm=fields[0]?fields[0][1]:'';const t=await aiCall(p.replace(/أعد JSON فقط[\s\S]*$/,'')+`\nاكتب الآن «${nm}» فقط، نصًا عربيًا مباشرًا جاهزًا للصق في خانة التحضير (أسطر مرقمة عند الحاجة)، دون عنوان أو مقدمة أو JSON أو علامات Markdown.`,{images:imgs});
+ if(field){const nm=fields[0]?fields[0][1]:'';const t=await aiCall(p.replace(/أعد JSON فقط[\s\S]*$/,'')+`\nاكتب الآن «${nm}» فقط، نصًا عربيًا مباشرًا جاهزًا للصق في خانة التحضير (أسطر مرقمة عند الحاجة)، دون عنوان أو مقدمة أو JSON أو علامات Markdown.`,{images:imgs,onText});
   let v=String(t||'').replace(/```[a-z]*|```/g,'').trim();if(v.startsWith('{')){try{const o=parseJSON(v);v=o[field]??Object.values(o)[0]??v}catch(_){}}
   if(Array.isArray(v))v=v.join('\n');v=String(v).replace(/^\*\*|\*\*$/g,'').replace(/\*\*/g,'').trim();if(!v)throw new Error('لم يُرجع المساعد نصًا — أعيدي المحاولة');return {[field]:v}}
  const t=await aiCall(p,{images:imgs});const o=parseJSON(t);for(const k in o)if(Array.isArray(o[k]))o[k]=o[k].join('\n');return o;
